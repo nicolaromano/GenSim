@@ -5,9 +5,9 @@ from dash.dependencies import Input, Output
 import plotly.graph_objects as go
 from simulation import Simulation
 
-sim = Simulation(100, 100, [10,  # Food
-                            25,  # Pray
-                            50])  # Predator
+sim = Simulation(10, 10, [10,  # Food
+                          50,  # Pray
+                          50])  # Predator
 app = dash.Dash(__name__)
 
 app.layout = html.Div(
