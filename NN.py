@@ -114,10 +114,12 @@ class NeuralNetwork:
         -------
         np.ndarray - the outputs of the neural network
         """
-        
+                        
         for layer in self.layers:
-            inputs = layer.forward(inputs)
-        return inputs
+            outputs = layer.forward(inputs)
+            inputs = outputs  # Set the inputs for the next layer to the outputs of the current layer            
+        
+        return outputs
 
     def __str__(self) -> str:
         """
