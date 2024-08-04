@@ -1,7 +1,5 @@
 {
-    "min_health_for_repro": 80,
-    "prey_repro_prob": 0.4,
-    "pred_repro_prob": 0.3,
-    "repro_cost": 10,
+    "epochs_per_generation": 100
+    "energy_loss_per_epoch": 1,
     "food_respawn_prob": 0.1
 }
