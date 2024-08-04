@@ -46,6 +46,34 @@ class Agent:
 
         self.nn = NN.createNeuralNetwork(3, [4, 2], 2, NN.relu, 0.5)
 
+    def move(self, closest_x: float, closest_y: float, closest_type: int) -> None:
+        """
+        Moves the agent based on the given inputs
+        
+        Parameters
+        ----------
+        closest_x: float - the x position of the closest agent
+        closest_y: float - the y position of the closest agent
+        closest_type: int - the type of the closest agent
+        
+        Returns
+        -------
+        None
+        """
+        
+        self.speed, self.angular_speed = self.nn.forward(np.array([closest_x, closest_y, closest_type]))
+        
+        self.angle += self.angular_speed % (2 * pi)
+        self.x += self.speed * cos(self.angle)
+        self.y += self.speed * sin(self.angle)
+        self.x %= self.simulation.width
+        self.y %= self.simulation.height
+        
+        self.energy -= self.simulation.config['energy_loss_per_epoch']  # Energy cost of moving
+        
+        if self.energy <= 0:
+            self.die()
+            
     def die(self) -> None:
         """
         Kills the agent, setting its alive status to False and energy to 0
@@ -87,6 +115,7 @@ class Simulation:
         self.width = width
         self.height = height
         self.current_epoch = 0
+        self.current_generation = 0
         self.agents = []
         self.agent_ids = {type: 0 for type in AGENT_TYPES}
         self.log_messages = []
@@ -188,21 +217,25 @@ class Simulation:
         None
         """
 
-        x_pos = [agent.x for agent in self.agents]
-        y_pos = [agent.y for agent in self.agents]
+        alive_agents = self.get_alive_agents(include_food=True)
+        alive_agents_no_food = self.get_alive_agents(include_food=False)
+        
+        x_pos = [agent.x for agent in alive_agents]
+        y_pos = [agent.y for agent in alive_agents]
         pos = np.column_stack((x_pos, y_pos))
         distances = distance_matrix(pos, pos)
 
         # Make the diagonal elements infinity so that the agent doesn't consider itself as the closest agent
         distances[range(len(distances)), range(len(distances))] = float("inf")
 
-        # If there are no agents left, end the simulation
-        if len(self.get_alive_agents(include_food=False)) == 0:            
-            self.log(f"Simulation ended at epoch {self.current_epoch}")
+        # If there are no agents left, end the current generation
+        if len(alive_agents_no_food) == 0:
+            self.log(f"No agents left. Skipping to next generation")
+            self.current_generation += 1
             return
 
         # Update the position of each agent
-        for ag_id, agent in enumerate(self.get_alive_agents()):
+        for ag_id, agent in enumerate(alive_agents):            
             if agent.type == "Food":
                 continue  # Food doesn't move
 
@@ -212,31 +245,8 @@ class Simulation:
             # Inputs to the neural network are the x and y positions of the closest agent and the type of the closest agent
             # Outputs are the speed and angular speed
             closest_agent = self.agents[distances[ag_id].argmin()]
-            agent.speed, agent.angular_speed = agent.nn.forward(np.array([closest_agent.x, closest_agent.y, AGENT_TYPES.index(closest_agent.type)]))
-
-            agent.angle += agent.angular_speed % (2 * pi)
-            agent.x += agent.speed * cos(agent.angle)
-            agent.y += agent.speed * sin(agent.angle)
-            agent.x %= self.width
-            agent.y %= self.height
-
-            agent.energy -= 1
-            if agent.energy <= 0:
-                self.agents.remove(agent)
+            agent.move(closest_agent.x, closest_agent.y, AGENT_TYPES.index(closest_agent.type))
  
-        for agent in self.get_alive_agents():
-            if agent.energy >= self.config['min_health_for_repro'] and agent.type != "Food":
-                repro_chance = self.config['prey_repro_prob'] if agent.type == "Prey" else self.config['pred_repro_prob']
-                if random() < repro_chance:
-                    self.agents.append(
-                        Agent(agent.type, agent.x + randint(-1, 1), agent.y + randint(-1, 1),
-                              agent.speed + random() * 2.0 - 1.0,
-                              randint(50, 100), agent.angle +
-                              random() * .25 * pi,
-                              agent.angular_speed + random() * pi/6 - pi/12, self))
-
-                agent.energy -= self.config['repro_cost']  # Energy cost of reproduction
-
         # Check if any 2 agents are in the same position
         self.check_collision()
 
