@@ -41,7 +41,9 @@ class Agent:
         self.angle = angle
         self.angular_speed = angular_speed
         self.energy = energy
+        self.food_eaten = 0
         self.alive = True
+        self.has_been_eaten = False
         self.age = 0
 
         self.nn = NN.createNeuralNetwork(3, [4, 2], 2, NN.relu, 0.5)
@@ -49,31 +51,51 @@ class Agent:
     def move(self, closest_x: float, closest_y: float, closest_type: int) -> None:
         """
         Moves the agent based on the given inputs
-        
+
         Parameters
         ----------
         closest_x: float - the x position of the closest agent
         closest_y: float - the y position of the closest agent
         closest_type: int - the type of the closest agent
+
+        Returns
+        -------
+        None
+        """
+
+        self.speed, self.angular_speed = self.nn.forward(
+            np.array([closest_x, closest_y, closest_type]))
+
+        self.angle += self.angular_speed % (2 * pi)
+        self.x += self.speed * cos(self.angle)
+        self.y += self.speed * sin(self.angle)
+        self.x %= self.simulation.width
+        self.y %= self.simulation.height
+
+        # Energy cost of moving
+        self.energy -= self.simulation.config['energy_loss_per_epoch']
+
+        if self.energy <= 0:
+            self.die()
+            
+    def eat(self, eaten_agent:"Agent") -> None:
+        """
+        Eats the given agent, updating the energy and food eaten
+        
+        Parameters
+        ----------
+        eaten_agent: Agent - the agent that is being eaten
         
         Returns
         -------
         None
         """
         
-        self.speed, self.angular_speed = self.nn.forward(np.array([closest_x, closest_y, closest_type]))
-        
-        self.angle += self.angular_speed % (2 * pi)
-        self.x += self.speed * cos(self.angle)
-        self.y += self.speed * sin(self.angle)
-        self.x %= self.simulation.width
-        self.y %= self.simulation.height
-        
-        self.energy -= self.simulation.config['energy_loss_per_epoch']  # Energy cost of moving
-        
-        if self.energy <= 0:
-            self.die()
-            
+        self.energy = min(self.energy + self.simulation.config["energy_per_food"][self.type], self.simulation.config["max_energy"][self.type])
+        self.food_eaten += 1
+        eaten_agent.has_been_eaten = True
+        eaten_agent.die()
+
     def die(self) -> None:
         """
         Kills the agent, setting its alive status to False and energy to 0
@@ -89,87 +111,77 @@ class Agent:
 
         self.alive = False
         self.energy = 0
+        
+    def get_fitness(self) -> float:
+        """
+        Returns the fitness of the agent based on its type and energy
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        float - the fitness of the agent
+        """
+
+        if self.type == "Food":
+            return 0
+        else:
+            return round(2 * self.age + 0.5 * self.energy + 3 * self.food_eaten - 20 * self.has_been_eaten)
+        
 
     def __str__(self) -> str:
         return f"Agent {self.id} at ({self.x}, {self.y}) with speed {self.speed} and angular speed {self.angular_speed}"
 
 
 class Simulation:
-    def __init__(self, width: int, height: int, num_agents: list[int]) -> None:
+    def __init__(self) -> None:
         """
         Initializes the simulation with the given width, height, and number of agents
 
         Parameters
         ----------
-        width: int - the width of the simulation
-        height: int - the height of the simulation
-        num_agents: int - the number of agents in the simulation
+        None
 
         Returns
         -------
         None
         """
-        
+
         self.read_config()
-        
-        self.width = width
-        self.height = height
-        self.current_epoch = 0
-        self.current_generation = 0
+
+        self.width = self.config['grid_size'][0]
+        self.height = self.config['grid_size'][1]
+        self.current_epoch = -1
+        self.current_generation = -1
         self.agents = []
         self.agent_ids = {type: 0 for type in AGENT_TYPES}
         self.log_messages = []
+        self.history = []
 
-        self.history = {
-            "Epoch": [0],
-            "Food": [num_agents[0]],
-            "Prey": [num_agents[1]],
-            "Predator": [num_agents[2]]
-        }
-
-        for i, n in enumerate(num_agents):
-            for _ in range(n):
-                while 1:
-                    x_pos = randint(0, width)
-                    y_pos = randint(0, height)
-                    if not any([agent.x == x_pos and agent.y == y_pos for agent in self.agents]):
-                        break
-
-                speed = random()
-                angle = random() * 2 * pi
-                # Random angular speed in the range [-pi/12, pi/12] (~ -15 to 15 degrees per second)
-                angular_speed = random() * pi/6 - pi/12
-                if AGENT_TYPES[i] == "Food":
-                    energy = 100
-                else:
-                    energy = randint(50, 100)
-
-                self.agents.append(
-                    Agent(AGENT_TYPES[i], x_pos, y_pos, speed, energy, angle, angular_speed, self))
-        self.log(
-            f"Started simulation with {num_agents[0]} food, {num_agents[1]} prey, and {num_agents[2]} predators")
+        self.new_generation()
 
     def read_config(self) -> None:
         """
         Reads the configuration file for the simulation (config.json)
-        
+
         Parameters
         ----------
         None
-        
+
         Returns
         -------
         None
         """
-        
+
         assert "config.json" in os.listdir(), "config.json not found"
-        
+
         self.config = {}
-        
+
         with open("config.json", "r") as f:
-            self.config = json.load(f)        
-        
-        
+            self.config = json.load(f)
+
     def get_next_id(self, type: str) -> int:
         """
         Gets the next id for an agent of the given type
@@ -186,7 +198,7 @@ class Simulation:
         self.agent_ids[type] += 1
         return id
 
-    def get_alive_agents(self, include_food=True) -> list[Agent]:
+    def get_alive_agents(self, include_food:bool=True) -> list[Agent]:
         """
         Gets the list of agents that are alive
 
@@ -217,9 +229,17 @@ class Simulation:
         None
         """
 
+        if self.current_epoch >= self.config['epochs_per_generation']:
+            self.new_generation()
+
         alive_agents = self.get_alive_agents(include_food=True)
         alive_agents_no_food = self.get_alive_agents(include_food=False)
-        
+
+        # If there are no agents left, end the current generation
+        if len(alive_agents_no_food) == 0:
+            self.log(f"No agents left. Skipping to next generation")
+            self.new_generation()
+
         x_pos = [agent.x for agent in alive_agents]
         y_pos = [agent.y for agent in alive_agents]
         pos = np.column_stack((x_pos, y_pos))
@@ -228,14 +248,8 @@ class Simulation:
         # Make the diagonal elements infinity so that the agent doesn't consider itself as the closest agent
         distances[range(len(distances)), range(len(distances))] = float("inf")
 
-        # If there are no agents left, end the current generation
-        if len(alive_agents_no_food) == 0:
-            self.log(f"No agents left. Skipping to next generation")
-            self.current_generation += 1
-            return
-
         # Update the position of each agent
-        for ag_id, agent in enumerate(alive_agents):            
+        for ag_id, agent in enumerate(alive_agents):
             if agent.type == "Food":
                 continue  # Food doesn't move
 
@@ -245,8 +259,9 @@ class Simulation:
             # Inputs to the neural network are the x and y positions of the closest agent and the type of the closest agent
             # Outputs are the speed and angular speed
             closest_agent = self.agents[distances[ag_id].argmin()]
-            agent.move(closest_agent.x, closest_agent.y, AGENT_TYPES.index(closest_agent.type))
- 
+            agent.move(closest_agent.x, closest_agent.y,
+                       AGENT_TYPES.index(closest_agent.type))
+
         # Check if any 2 agents are in the same position
         self.check_collision()
 
@@ -277,31 +292,101 @@ class Simulation:
                     # Both Preys and predators can eat food, but Preys get more energy from it. Predators eat food only if they are at low energy
 
                     # Prey eats food
-                    if (agent1.type == "Food" and agent2.type == "Prey") or (agent1.type == "Prey" and agent2.type == "Food"):
-                        agent2.energy = min(agent2.energy + 20, 100)
-                        if agent1.type == "Food":
-                            agent1.die()
-                        else:
-                            agent2.die()
-
+                    if (agent1.type == "Food" and agent2.type == "Prey"):
+                        agent2.eat(agent1)
+                    elif (agent1.type == "Prey" and agent2.type == "Food"):
+                        agent1.eat(agent2)
                     # Predator eats food
-                    elif (agent1.type == "Food" and agent2.type == "Predator" and agent2.energy < 25) or (agent1.type == "Predator" and agent2.type == "Food" and agent1.energy < 25):
-                        if agent1.type == "Food":
-                            agent1.die()
-                            agent2.energy = min(agent2.energy + 2, 100)
-                        else:
-                            agent1.energy = min(agent1.energy + 2, 100)
-                            agent2.die()
-
+                    elif (agent1.type == "Food" and agent2.type == "Predator" and agent2.energy < self.config["low_energy_threshold"]):
+                        agent2.eat(agent1)
+                    elif (agent1.type == "Predator" and agent2.type == "Food" and agent1.energy < self.config["low_energy_threshold"]):
+                        agent1.eat(agent2)
                     # Prey eats predator
                     elif (agent1.type == "Prey" and agent2.type == "Predator"):
-                        agent2.energy = min(agent2.energy + 10, 100)
-                        agent1.die()
+                        agent2.eat(agent1)
                     elif (agent1.type == "Predator" and agent2.type == "Prey"):
-                        agent1.energy = min(agent1.energy + 10, 100)
-                        agent2.die()
+                        agent1.eat(agent2)
                     else:
                         pass
+
+    def new_generation(self) -> None:
+        """
+        Starts a new generation
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+
+        if self.current_generation > -1:
+            self.log(f"Generation {self.current_generation} completed")
+
+        self.current_generation += 1
+        self.current_epoch = 0
+
+        self.history.append({
+            "Epoch": [0],
+            "Food": [self.config["num_agents"]["Food"]],
+            "Prey": [self.config["num_agents"]["Prey"]],
+            "Predator": [self.config["num_agents"]["Predator"]]
+        })
+        
+        
+        if self.current_generation > 0:                
+            # Get the top agents of the current generation
+            top_agents = self.get_top_agents("all")
+            top_preys = [agent for agent in top_agents if agent.type == "Prey"]
+            top_predators = [agent for agent in top_agents if agent.type == "Predator"]
+            
+            # Keep 10% of the top Preys and Predators
+            self.agents = top_preys[:int(0.1 * len(top_preys))] + top_predators[:int(0.1 * len(top_predators))]
+            
+            # The rest of the agents are crossed and mutated versions of the top agents
+            n_preys = self.config["num_agents"]["Prey"] - int(0.1 * len(top_preys))
+            n_predators = self.config["num_agents"]["Predator"] - int(0.1 * len(top_predators))
+            
+            for i in range(n_preys + n_predators):
+                if i < n_preys:
+                    type = "Prey"
+                else:
+                    type = "Predator"
+                    
+                parent1, parent2 = np.random.choice(top_preys, 2, replace=False)
+                while 1:
+                    x_pos = randint(0, self.width)
+                    y_pos = randint(0, self.height)
+                    if not any([agent.x == x_pos and agent.y == y_pos for agent in self.agents]):
+                        break
+                    
+                child = Agent(type, x_pos, y_pos, 
+                            energy=self.config["initial_energy"][type], 
+                            # angular_speed is between -pi/12 and pi/12 (-15 and 15 degrees)
+                            speed=random(), angle=random() * 2 * pi, angular_speed=random() * pi/6 - pi/12, 
+                            simulation=self)
+
+                child.nn = parent1.nn.crossover(parent2.nn)
+                child.nn = child.nn.mutate(self.config["mutation_rate"])
+                self.agents.append(child)
+        else: # First generation
+            for type in AGENT_TYPES:
+                for i in range(self.config["num_agents"][type]):
+                    while 1:
+                        x_pos = randint(0, self.width)
+                        y_pos = randint(0, self.height)
+                        if not any([agent.x == x_pos and agent.y == y_pos for agent in self.agents]):
+                            break
+                    self.agents.append(Agent(type, x_pos, y_pos, 
+                                                energy=self.config["initial_energy"][type], 
+                                                speed=random(), angle=random() * 2 * pi, angular_speed=random() * pi/6 - pi/12, 
+                                                simulation=self))                    
+            
+        self.log(
+            f"Started simulation with {self.config['num_agents']['Food']} food, {self.config['num_agents']['Prey']} prey, and {self.config['num_agents']['Predator']} predators")
+        
 
     def __update_history(self) -> None:
         """
@@ -316,13 +401,35 @@ class Simulation:
         None
         """
 
-        self.history["Epoch"].append(self.current_epoch)
-        self.history["Food"].append(
-            len([agent for agent in self.agents if agent.type == "Food"]))
-        self.history["Prey"].append(
-            len([agent for agent in self.agents if agent.type == "Prey"]))
-        self.history["Predator"].append(
-            len([agent for agent in self.agents if agent.type == "Predator"]))
+        alive_agents = self.get_alive_agents(include_food=True)
+        
+        self.history[self.current_generation]["Epoch"].append(
+            self.current_epoch)
+        self.history[self.current_generation]["Food"].append(
+            len([agent for agent in alive_agents if agent.type == "Food"]))
+        self.history[self.current_generation]["Prey"].append(
+            len([agent for agent in alive_agents if agent.type == "Prey"]))
+        self.history[self.current_generation]["Predator"].append(
+            len([agent for agent in alive_agents if agent.type == "Predator"]))
+        
+    def get_top_agents(self, top_n:int|str = 5) -> list[Agent]:
+        """
+        Gets the top agents of the current generation based on their fitness
+
+        Parameters
+        ----------
+        top_n: int|str, defaults to 5 - the number of top agents to return (if "all", returns all agents)
+
+        Returns
+        -------
+        list[Agent] - the top agents of the current generation
+        """
+
+        top_agents = sorted([a for a in self.agents if a.type != "Food"], key=lambda x: x.get_fitness(), reverse=True)
+        if top_n == "all":
+            return top_agents
+        else:
+            return top_agents[:top_n]
 
     def log(self, msg: str) -> None:
         """
@@ -337,7 +444,7 @@ class Simulation:
         None
         """
 
-        self.log_messages.append(msg)
+        self.log_messages.append(msg + "\n")
 
     def __str__(self):
         return f"Simulation with {len(self.agents)} agents in a {self.width}x{self.height} grid"
