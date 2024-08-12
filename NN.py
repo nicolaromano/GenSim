@@ -1,4 +1,4 @@
-# NN.py a simple neural network implementation based on direct acyclic graphs
+# NN.py a simple implementation of a feedforward neural network
 # This will be used to run a genetic algorithm to evolve the weights of the network
 
 import numpy as np
@@ -120,6 +120,53 @@ class NeuralNetwork:
             inputs = outputs  # Set the inputs for the next layer to the outputs of the current layer            
         
         return outputs
+    
+    def crossover(self, other: "NeuralNetwork") -> "NeuralNetwork":
+        """
+        Crossover operation between two neural networks
+        
+        Parameters
+        ----------
+        other: NeuralNetwork - the other neural network to crossover with
+        
+        Returns
+        -------
+        NeuralNetwork - the offspring of the two neural networks
+        """
+        
+        new_layers = []
+        for layer1, layer2 in zip(self.layers, other.layers):
+            new_neurons = []
+            for neuron1, neuron2 in zip(layer1.neurons, layer2.neurons):
+                new_weights = []
+                for w1, w2 in zip(neuron1.weights, neuron2.weights):
+                    new_weights.append(w1 if np.random.rand() > 0.5 else w2)
+                new_bias = neuron1.bias if np.random.rand() > 0.5 else neuron2.bias
+                new_neurons.append(Neuron(np.array(new_weights), new_bias, neuron1.activation))
+            new_layers.append(Layer(new_neurons))
+        
+        return NeuralNetwork(new_layers)
+    
+    def mutate(self, mutation_rate: float) -> None:
+        """
+        Mutates the neural network with the given mutation rate
+        
+        Parameters
+        ----------
+        mutation_rate: float - the probability of a weight being mutated
+        
+        Returns
+        -------
+        None
+        """
+        
+        for layer in self.layers:
+            for neuron in layer.neurons:
+                for i in range(len(neuron.weights)):
+                    if np.random.rand() < mutation_rate:
+                        neuron.weights[i] = np.random.randn()
+                if np.random.rand() < mutation_rate:
+                    neuron.bias = np.random.randn()                    
 
     def __str__(self) -> str:
         """
