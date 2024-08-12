@@ -1,5 +1,26 @@
 {
-    "epochs_per_generation": 100
+    "grid_size": [100, 100],
+    "num_agents": {
+        "Prey": 50,
+        "Predator": 20,
+        "Food": 100
+    },
+    "initial_energy": {
+        "Prey": 100,
+        "Predator": 100,
+        "Food": 100
+    },
+    "max_energy": {
+        "Prey": 200,
+        "Predator": 200
+    },
+    "energy_per_food": { 
+        "Prey": 20,
+        "Predator": 10
+        },        
+    "low_energy_threshold": 20,
+    "epochs_per_generation": 100,
+    "mutation_rate": 0.05,
     "energy_loss_per_epoch": 1,
     "food_respawn_prob": 0.1
 }
